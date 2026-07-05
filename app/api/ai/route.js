@@ -20,6 +20,7 @@ const KNOWN_DISCOGRAPHIES = {
       { title: 'Evermore', year: 2020, included: true, reason: 'Original studio album' },
       { title: 'Midnights', year: 2022, included: true, reason: 'Original studio album' },
       { title: 'The Tortured Poets Department', year: 2024, included: true, reason: 'Original studio album' },
+      { title: 'The Life of a Showgirl', year: 2025, included: true, reason: 'Original studio album' },
       { title: 'Fearless (Taylor\'s Version)', year: 2021, included: false, reason: 'Re-recording, not a new original studio album' },
       { title: 'Red (Taylor\'s Version)', year: 2021, included: false, reason: 'Re-recording, not a new original studio album' },
       { title: 'Speak Now (Taylor\'s Version)', year: 2023, included: false, reason: 'Re-recording, not a new original studio album' },
