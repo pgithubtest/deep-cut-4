@@ -174,6 +174,26 @@ export default function App() {
     setContent(text);
   }
 
+  function formatColdStatus(nextTrack, currentMode = mode) {
+    const existingParts = status.split(' · ');
+    const albumName = existingParts[0] || artist;
+    return `${albumName} · Track ${nextTrack.num} · Next: ${nextTrack.title} · Mode: ${currentMode}`;
+  }
+
+  function setColdTrack(nextTrack) {
+    setTrack(nextTrack);
+    setStatus(formatColdStatus(nextTrack));
+    setResumePhase('cold');
+    setPhase('cold');
+  }
+
+  function handleModeChange(nextMode) {
+    setMode(nextMode);
+    if (phase === 'cold' && track) {
+      setStatus(formatColdStatus(track, nextMode));
+    }
+  }
+
   function goHome() {
     if (RESUMABLE_PHASES.includes(phase)) setResumePhase(phase);
     setErr('');
@@ -251,9 +271,7 @@ export default function App() {
 
   function goToCold() {
     const coldListen = parseColdListen(content);
-    setTrack(coldListen || { num: '1', title: 'the first track' });
-    setResumePhase('cold');
-    setPhase('cold');
+    setColdTrack(coldListen || { num: '1', title: 'the first track' });
   }
 
   async function handleListened() {
@@ -308,9 +326,7 @@ export default function App() {
     if (nextLine) {
       const coldListen = parseColdListen(nextLine);
       if (coldListen) {
-        setTrack(coldListen);
-        setResumePhase('cold');
-        setPhase('cold');
+        setColdTrack(coldListen);
         return;
       }
     }
@@ -322,9 +338,7 @@ export default function App() {
     }
     const coldListen = parseColdListen(data.text);
     if (coldListen) {
-      setTrack(coldListen);
-      setResumePhase('cold');
-      setPhase('cold');
+      setColdTrack(coldListen);
     }
   }
 
@@ -446,7 +460,7 @@ export default function App() {
             <span className="artist-lbl">{artist}</span>
             <div className="mode-btns">
               {[['deep', 'Deep listen'], ['commute', 'Commute'], ['reentry', 'Re-entry']].map(([key, label]) => (
-                <button key={key} className={`mbtn${mode === key ? ' on' : ''}`} onClick={() => setMode(key)}>{label}</button>
+                <button key={key} className={`mbtn${mode === key ? ' on' : ''}`} onClick={() => handleModeChange(key)}>{label}</button>
               ))}
             </div>
           </div>
