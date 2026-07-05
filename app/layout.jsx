@@ -2,6 +2,7 @@ import './globals.css';
 import './polish.css';
 import './sessions.css';
 import './artist-orientation.css';
+import './previous.css';
 import CatchUpEnhancer from './catchup-enhancer';
 
 export const metadata = {
