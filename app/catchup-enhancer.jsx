@@ -27,6 +27,32 @@ function normaliseMode(mode) {
   return 'Deep listen';
 }
 
+function formatSessionMeta(session) {
+  const artist = String(session?.artist || '').trim();
+  const modeLabel = normaliseMode(session?.mode);
+  let meta = String(session?.status || session?.resumePhase || 'Saved session').trim();
+
+  if (artist) {
+    const escapedArtist = artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    meta = meta.replace(new RegExp(`^${escapedArtist}\\s*·\\s*`, 'i'), '');
+  }
+
+  meta = meta
+    .replace(/\s*·\s*Mode:\s*(deep|commute|reentry)\b/gi, '')
+    .replace(/\s*·\s*(Deep listen|On the move)\b/gi, '')
+    .replace(/\bMode:\s*(deep|commute|reentry)\b/gi, '')
+    .replace(/\s*·\s*$/g, '')
+    .trim();
+
+  if (!meta || meta === 'confirming') meta = 'Discography ready';
+  if (meta === 'album_intro') meta = 'Album intro ready';
+  if (meta === 'cold') meta = session?.track ? `Track ${session.track.num} · ${session.track.title}` : 'Ready for next track';
+  if (meta === 'breakdown') meta = session?.track ? `Track ${session.track.num} · ${session.track.title}` : 'Breakdown ready';
+  if (meta === 'album_wrap') meta = 'Album wrap ready';
+
+  return `${meta} · ${modeLabel}`;
+}
+
 function sessionIdFor(session) {
   const base = String(session?.artist || 'session').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'session';
   return `${base}-${session?.createdAt || session?.savedAt || Date.now()}`;
@@ -186,7 +212,27 @@ async function catchUpSession(session, resumeAction, button) {
   }
 }
 
+function normaliseActiveResumeCard() {
+  const resumeCard = document.querySelector('.resume-card');
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  if (!resumeCard || !current?.artist || resumeCard.dataset.normalised === 'true') return;
+
+  resumeCard.dataset.normalised = 'true';
+  resumeCard.classList.add('session-row-active');
+
+  const title = resumeCard.querySelector('.resume-title');
+  if (title) title.textContent = current.artist;
+
+  const meta = resumeCard.querySelector('.resume-meta');
+  if (meta) meta.textContent = formatSessionMeta(current);
+
+  const resumeButton = resumeCard.querySelector('.resume-btn');
+  if (resumeButton) resumeButton.textContent = 'Resume';
+}
+
 function addCatchUpButton() {
+  normaliseActiveResumeCard();
+
   const resumeCard = document.querySelector('.resume-card');
   const resumeButton = resumeCard?.querySelector('.resume-btn');
   if (!resumeCard || !resumeButton || resumeCard.querySelector('.catchup-btn')) return;
@@ -196,7 +242,7 @@ function addCatchUpButton() {
 
   const button = document.createElement('button');
   button.className = 'bg catchup-btn';
-  button.textContent = 'Catch me up';
+  button.textContent = 'Catch up';
   button.addEventListener('click', () => catchUpSession(current, () => resumeButton.click(), button));
 
   resumeButton.insertAdjacentElement('afterend', button);
@@ -219,11 +265,6 @@ function renderSessionLibrary() {
   const section = document.createElement('div');
   section.className = 'session-library';
 
-  const label = document.createElement('div');
-  label.className = 'session-library-label';
-  label.textContent = 'Other saved sessions';
-  section.appendChild(label);
-
   sessions.forEach((session) => {
     const row = document.createElement('div');
     row.className = 'session-row';
@@ -237,7 +278,7 @@ function renderSessionLibrary() {
 
     const meta = document.createElement('div');
     meta.className = 'session-meta';
-    meta.textContent = `${session.status || session.resumePhase || 'Saved session'} · ${normaliseMode(session.mode)}`;
+    meta.textContent = formatSessionMeta(session);
 
     info.appendChild(title);
     info.appendChild(meta);
@@ -252,7 +293,7 @@ function renderSessionLibrary() {
 
     const catchup = document.createElement('button');
     catchup.className = 'bg session-catchup';
-    catchup.textContent = 'Catch me up';
+    catchup.textContent = 'Catch up';
     catchup.addEventListener('click', () => catchUpSession(session, () => activateSession(session), catchup));
 
     actions.appendChild(resume);
