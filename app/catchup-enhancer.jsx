@@ -3,6 +3,16 @@
 import { useEffect } from 'react';
 
 const STORAGE_KEY = 'deep-cut-active-session-v1';
+const LIBRARY_KEY = 'deep-cut-sessions-v1';
+const MAX_SESSIONS = 8;
+
+function safeParse(value, fallback = null) {
+  try {
+    return JSON.parse(value || 'null') || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function cleanText(text = '') {
   return String(text)
@@ -12,7 +22,83 @@ function cleanText(text = '') {
     .trim();
 }
 
-function renderOverlay(text, resumeButton) {
+function normaliseMode(mode) {
+  if (mode === 'commute') return 'On the move';
+  return 'Deep listen';
+}
+
+function sessionIdFor(session) {
+  const base = String(session?.artist || 'session').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'session';
+  return `${base}-${session?.createdAt || session?.savedAt || Date.now()}`;
+}
+
+function readLibrary() {
+  const library = safeParse(window.localStorage.getItem(LIBRARY_KEY), { activeId: null, sessions: {} });
+  return {
+    activeId: library?.activeId || null,
+    sessions: library?.sessions && typeof library.sessions === 'object' ? library.sessions : {}
+  };
+}
+
+function writeLibrary(library) {
+  const sessions = Object.values(library.sessions || {})
+    .filter((session) => session?.artist)
+    .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+    .slice(0, MAX_SESSIONS)
+    .reduce((acc, session) => {
+      acc[session.id] = session;
+      return acc;
+    }, {});
+  window.localStorage.setItem(LIBRARY_KEY, JSON.stringify({ activeId: library.activeId, sessions }));
+}
+
+function saveSessionToLibrary(rawSession, makeActive = true) {
+  if (!rawSession?.artist) return null;
+  const library = readLibrary();
+  const existing = Object.values(library.sessions).find((session) => session.id === rawSession.id || session.artist === rawSession.artist);
+  const id = existing?.id || rawSession.id || sessionIdFor(rawSession);
+  const session = {
+    ...existing,
+    ...rawSession,
+    id,
+    createdAt: existing?.createdAt || rawSession.createdAt || Date.now(),
+    savedAt: rawSession.savedAt || Date.now()
+  };
+  library.sessions[id] = session;
+  if (makeActive) library.activeId = id;
+  writeLibrary(library);
+  return session;
+}
+
+function archiveCurrentActiveSession() {
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  if (current?.artist) saveSessionToLibrary(current, true);
+}
+
+function installStorageBridge() {
+  if (window.__deepCutStorageBridgeInstalled) return;
+  window.__deepCutStorageBridgeInstalled = true;
+
+  archiveCurrentActiveSession();
+
+  const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
+  const originalRemoveItem = window.localStorage.removeItem.bind(window.localStorage);
+
+  window.localStorage.setItem = (key, value) => {
+    if (key === STORAGE_KEY) {
+      const session = safeParse(value);
+      if (session?.artist) saveSessionToLibrary(session, true);
+    }
+    return originalSetItem(key, value);
+  };
+
+  window.localStorage.removeItem = (key) => {
+    if (key === STORAGE_KEY) archiveCurrentActiveSession();
+    return originalRemoveItem(key);
+  };
+}
+
+function renderOverlay(text, resumeAction) {
   document.querySelector('.catchup-overlay')?.remove();
 
   const overlay = document.createElement('div');
@@ -45,7 +131,7 @@ function renderOverlay(text, resumeButton) {
   continueButton.textContent = 'Continue listening';
   continueButton.addEventListener('click', () => {
     overlay.remove();
-    resumeButton?.click();
+    resumeAction?.();
   });
 
   const closeButton = document.createElement('button');
@@ -63,54 +149,136 @@ function renderOverlay(text, resumeButton) {
   document.body.appendChild(overlay);
 }
 
+function activateSession(session) {
+  if (!session?.artist) return;
+  saveSessionToLibrary(session, true);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  window.location.reload();
+}
+
+async function catchUpSession(session, resumeAction, button) {
+  if (!session?.artist) return;
+  const originalText = button.textContent;
+  button.textContent = 'Catching up...';
+  button.disabled = true;
+
+  try {
+    const response = await fetch('/api/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'catchUp',
+        messages: session.messages || [],
+        mode: session.mode || 'deep',
+        phase: session.resumePhase || 'confirming',
+        status: session.status || '',
+        track: session.track || null
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error || 'Catch-up failed.');
+    renderOverlay(data.text, resumeAction);
+  } catch (error) {
+    alert(error.message || 'Catch-up failed.');
+  } finally {
+    button.textContent = originalText;
+    button.disabled = false;
+  }
+}
+
 function addCatchUpButton() {
   const resumeCard = document.querySelector('.resume-card');
   const resumeButton = resumeCard?.querySelector('.resume-btn');
   if (!resumeCard || !resumeButton || resumeCard.querySelector('.catchup-btn')) return;
 
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  if (!current?.artist) return;
+
   const button = document.createElement('button');
   button.className = 'bg catchup-btn';
   button.textContent = 'Catch me up';
-
-  button.addEventListener('click', async () => {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    if (!saved?.artist) return;
-
-    const originalText = button.textContent;
-    button.textContent = 'Catching up...';
-    button.disabled = true;
-
-    try {
-      const response = await fetch('/api/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'catchUp',
-          messages: saved.messages || [],
-          mode: saved.mode || 'deep',
-          phase: saved.resumePhase || 'confirming',
-          status: saved.status || '',
-          track: saved.track || null
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || 'Catch-up failed.');
-      renderOverlay(data.text, resumeButton);
-    } catch (error) {
-      alert(error.message || 'Catch-up failed.');
-    } finally {
-      button.textContent = originalText;
-      button.disabled = false;
-    }
-  });
+  button.addEventListener('click', () => catchUpSession(current, () => resumeButton.click(), button));
 
   resumeButton.insertAdjacentElement('afterend', button);
 }
 
+function renderSessionLibrary() {
+  const landing = document.querySelector('.input-wrap');
+  if (!landing || landing.querySelector('.session-library')) return;
+
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  archiveCurrentActiveSession();
+  const library = readLibrary();
+  const sessions = Object.values(library.sessions || {})
+    .filter((session) => session?.artist && session.artist !== current?.artist)
+    .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+    .slice(0, 4);
+
+  if (!sessions.length) return;
+
+  const section = document.createElement('div');
+  section.className = 'session-library';
+
+  const label = document.createElement('div');
+  label.className = 'session-library-label';
+  label.textContent = 'Other saved sessions';
+  section.appendChild(label);
+
+  sessions.forEach((session) => {
+    const row = document.createElement('div');
+    row.className = 'session-row';
+
+    const info = document.createElement('div');
+    info.className = 'session-info';
+
+    const title = document.createElement('div');
+    title.className = 'session-title';
+    title.textContent = session.artist;
+
+    const meta = document.createElement('div');
+    meta.className = 'session-meta';
+    meta.textContent = `${session.status || session.resumePhase || 'Saved session'} · ${normaliseMode(session.mode)}`;
+
+    info.appendChild(title);
+    info.appendChild(meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'session-actions';
+
+    const resume = document.createElement('button');
+    resume.className = 'bg session-resume';
+    resume.textContent = 'Resume';
+    resume.addEventListener('click', () => activateSession(session));
+
+    const catchup = document.createElement('button');
+    catchup.className = 'bg session-catchup';
+    catchup.textContent = 'Catch me up';
+    catchup.addEventListener('click', () => catchUpSession(session, () => activateSession(session), catchup));
+
+    actions.appendChild(resume);
+    actions.appendChild(catchup);
+    row.appendChild(info);
+    row.appendChild(actions);
+    section.appendChild(row);
+  });
+
+  const divider = landing.querySelector('.resume-divider');
+  if (divider) {
+    divider.insertAdjacentElement('beforebegin', section);
+  } else {
+    landing.insertAdjacentElement('afterbegin', section);
+  }
+}
+
 export default function CatchUpEnhancer() {
   useEffect(() => {
+    installStorageBridge();
     addCatchUpButton();
-    const observer = new MutationObserver(addCatchUpButton);
+    renderSessionLibrary();
+    const observer = new MutationObserver(() => {
+      addCatchUpButton();
+      renderSessionLibrary();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, []);
