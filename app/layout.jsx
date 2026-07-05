@@ -1,5 +1,6 @@
 import './globals.css';
 import './polish.css';
+import './sessions.css';
 import CatchUpEnhancer from './catchup-enhancer';
 
 export const metadata = {
