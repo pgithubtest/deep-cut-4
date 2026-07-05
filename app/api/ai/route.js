@@ -12,11 +12,31 @@ function asConversationInput(messages = []) {
   }));
 }
 
-function extractJson(text) {
-  const cleaned = text.replace(/```json|```/g, '').trim();
+function sanitizeJsonText(text) {
+  return text
+    .replace(/```json|```/g, '')
+    // Strip control characters and Unicode private-use-area / zero-width
+    // citation markers that the OpenAI web_search tool sometimes splices
+    // directly into output_text. These are invisible but break JSON.parse.
+    .replace(/[\u0000-\u001F\u200B-\u200F\uE000-\uF8FF]/g, '')
+    .trim();
+}
+
+function tryExtractJson(text) {
+  const cleaned = sanitizeJsonText(text);
   const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON object was found in the AI response.');
-  return JSON.parse(match[0]);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    // Common fixup: trailing commas before ] or }
+    const repaired = match[0].replace(/,\s*([\]}])/g, '$1');
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      return null;
+    }
+  }
 }
 
 export async function POST(request) {
@@ -26,16 +46,28 @@ export async function POST(request) {
 
     if (action === 'buildDiscography') {
       if (!artist?.trim()) throw new Error('Artist is missing.');
-      const prompt = `Search the web for the complete official discography of "${artist.trim()}". Find every album-length release: original studio albums, re-recordings, live albums, compilations, greatest hits, holiday or Christmas albums, soundtracks, anthologies, and any other official releases. Use search results only, not memory. Then return a JSON object listing every release you found. Set "included" to true ONLY for original studio albums of entirely new material. Set "included" to false for everything else with a short reason. Return ONLY valid JSON, no markdown:\n{"artist":"${artist.trim()}","albums":[{"title":"...","year":2000,"included":true,"reason":"Original studio album"}]}`;
+      const prompt = `Search the web for the complete official discography of "${artist.trim()}". Find every album-length release: original studio albums, re-recordings, live albums, compilations, greatest hits, holiday or Christmas albums, soundtracks, anthologies, and any other official releases. Use search results only, not memory. Then return a JSON object listing every release you found. Set "included" to true ONLY for original studio albums of entirely new material. Set "included" to false for everything else with a short reason. Return ONLY valid JSON, no markdown, no citation markers or footnotes of any kind embedded in the JSON:\n{"artist":"${artist.trim()}","albums":[{"title":"...","year":2000,"included":true,"reason":"Original studio album"}]}`;
 
-      const text = await askAI({
-        instructions: 'You are a careful music discography researcher. Return only valid JSON.',
+      let text = await askAI({
+        instructions: 'You are a careful music discography researcher. Return only valid JSON. Never insert citation markers, footnotes, or any non-JSON characters inside the JSON output.',
         input: prompt,
         useWebSearch: true,
-        maxOutputTokens: 3000
+        maxOutputTokens: 4500
       });
 
-      const parsed = extractJson(text);
+      let parsed = tryExtractJson(text);
+
+      if (!parsed) {
+        text = await askAI({
+          instructions: 'You are a careful music discography researcher. Return only valid JSON. Never insert citation markers, footnotes, or any non-JSON characters inside the JSON output. Your previous response was not valid JSON. Fix this.',
+          input: prompt,
+          useWebSearch: true,
+          maxOutputTokens: 4500
+        });
+        parsed = tryExtractJson(text);
+      }
+
+      if (!parsed) throw new Error('No valid JSON object was found in the AI response.');
       return NextResponse.json({ text, parsed });
     }
 
