@@ -222,6 +222,10 @@ export default function App() {
     setPreviousScreen(null);
   }
 
+  function previousAction() {
+    return canGoPrevious ? <button className="previous-link" onClick={goPreviousScreen}>← Previous</button> : null;
+  }
+
   function updateGeneratedText(text) {
     const parsedStatus = parseStatus(text);
     if (parsedStatus) setStatus(parsedStatus);
@@ -602,7 +606,6 @@ export default function App() {
         {inSession && (
           <div ref={topRef} className="mode-hdr">
             <button className="home-btn" onClick={goHome}>← Home</button>
-            {canGoPrevious && <button className="home-btn previous-btn" onClick={goPreviousScreen}>← Previous</button>}
             <span className="artist-lbl">{artist}</span>
             <div className="mode-btns">
               {[['deep', 'Deep listen'], ['commute', 'Commute'], ['reentry', 'Re-entry']].map(([key, label]) => (
@@ -616,7 +619,7 @@ export default function App() {
           <div className="fade-in">
             <div className="eyebrow">Before you listen</div>
             <div className="content">{renderParagraphs(content)}</div>
-            <div className="actions"><button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={goToCold}>Begin with track 1</button></div>
+            <div className="actions">{previousAction()}<button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={goToCold}>Begin with track 1</button></div>
           </div>
         )}
 
@@ -631,7 +634,7 @@ export default function App() {
                 </div>
               )}
               <div className="cinstr">Open Spotify. Go in cold. Come back when you're done.</div>
-              <button className="bp cbtn" onClick={handleListened}>Show me the breakdown</button>
+              <div className="actions cold-actions">{previousAction()}<button className="bp cbtn" onClick={handleListened}>Show me the breakdown</button></div>
               <div className="skip-actions">
                 <button className="bg" onClick={handleSkipBreakdown}>Skip breakdown</button>
               </div>
@@ -644,7 +647,7 @@ export default function App() {
             <div className="eyebrow">Track {track?.num} · {track?.title}</div>
             <div className="content">{renderParagraphs(content)}</div>
             {replay && <div className="replay-row"><span className={`rpill ${replay}`}>{replay === 'ess' ? '↺ Replay this' : replay === 'opt' ? '↺ Optional replay' : '→ Keep moving'}</span>{replayReason && <span className="replay-txt">{replayReason}</span>}</div>}
-            <div className="actions"><button className="bp" onClick={handleNext}>Continue listening</button></div>
+            <div className="actions">{previousAction()}<button className="bp" onClick={handleNext}>Continue listening</button></div>
           </div>
         )}
 
@@ -652,7 +655,7 @@ export default function App() {
           <div className="fade-in">
             <div className="eyebrow">After the album</div>
             <div className="content">{renderParagraphs(content)}</div>
-            <div className="actions"><button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={handleNextAlbum}>Next record</button></div>
+            <div className="actions">{previousAction()}<button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={handleNextAlbum}>Next record</button></div>
           </div>
         )}
       </div>
