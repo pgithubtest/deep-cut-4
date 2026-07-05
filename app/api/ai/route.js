@@ -5,6 +5,29 @@ import { SYSTEM_PROMPT, modeNote } from '../../../lib/systemPrompt';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const KNOWN_DISCOGRAPHIES = {
+  'taylor swift': {
+    artist: 'Taylor Swift',
+    albums: [
+      { title: 'Taylor Swift', year: 2006, included: true, reason: 'Original studio album' },
+      { title: 'Fearless', year: 2008, included: true, reason: 'Original studio album' },
+      { title: 'Speak Now', year: 2010, included: true, reason: 'Original studio album' },
+      { title: 'Red', year: 2012, included: true, reason: 'Original studio album' },
+      { title: '1989', year: 2014, included: true, reason: 'Original studio album' },
+      { title: 'Reputation', year: 2017, included: true, reason: 'Original studio album' },
+      { title: 'Lover', year: 2019, included: true, reason: 'Original studio album' },
+      { title: 'Folklore', year: 2020, included: true, reason: 'Original studio album' },
+      { title: 'Evermore', year: 2020, included: true, reason: 'Original studio album' },
+      { title: 'Midnights', year: 2022, included: true, reason: 'Original studio album' },
+      { title: 'The Tortured Poets Department', year: 2024, included: true, reason: 'Original studio album' },
+      { title: 'Fearless (Taylor\'s Version)', year: 2021, included: false, reason: 'Re-recording, not a new original studio album' },
+      { title: 'Red (Taylor\'s Version)', year: 2021, included: false, reason: 'Re-recording, not a new original studio album' },
+      { title: 'Speak Now (Taylor\'s Version)', year: 2023, included: false, reason: 'Re-recording, not a new original studio album' },
+      { title: '1989 (Taylor\'s Version)', year: 2023, included: false, reason: 'Re-recording, not a new original studio album' }
+    ]
+  }
+};
+
 function asConversationInput(messages = []) {
   return messages.map((message) => ({
     role: message.role,
@@ -15,9 +38,6 @@ function asConversationInput(messages = []) {
 function sanitizeJsonText(text) {
   return text
     .replace(/```json|```/g, '')
-    // Strip control characters and Unicode private-use-area / zero-width
-    // citation markers that the OpenAI web_search tool sometimes splices
-    // directly into output_text. These are invisible but break JSON.parse.
     .replace(/[\u0000-\u001F\u200B-\u200F\uE000-\uF8FF]/g, '')
     .trim();
 }
@@ -29,7 +49,6 @@ function tryExtractJson(text) {
   try {
     return JSON.parse(match[0]);
   } catch {
-    // Common fixup: trailing commas before ] or }
     const repaired = match[0].replace(/,\s*([\]}])/g, '$1');
     try {
       return JSON.parse(repaired);
@@ -39,6 +58,21 @@ function tryExtractJson(text) {
   }
 }
 
+function normalizeDiscography(parsed, fallbackArtist) {
+  const albums = Array.isArray(parsed?.albums) ? parsed.albums : [];
+  return {
+    artist: parsed?.artist || fallbackArtist,
+    albums: albums
+      .filter((album) => album?.title)
+      .map((album) => ({
+        title: String(album.title),
+        year: Number(album.year) || '',
+        included: Boolean(album.included),
+        reason: String(album.reason || (album.included ? 'Original studio album' : 'Excluded release'))
+      }))
+  };
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -46,28 +80,23 @@ export async function POST(request) {
 
     if (action === 'buildDiscography') {
       if (!artist?.trim()) throw new Error('Artist is missing.');
-      const prompt = `Search the web for the complete official discography of "${artist.trim()}". Find every album-length release: original studio albums, re-recordings, live albums, compilations, greatest hits, holiday or Christmas albums, soundtracks, anthologies, and any other official releases. Use search results only, not memory. Then return a JSON object listing every release you found. Set "included" to true ONLY for original studio albums of entirely new material. Set "included" to false for everything else with a short reason. Return ONLY valid JSON, no markdown, no citation markers or footnotes of any kind embedded in the JSON:\n{"artist":"${artist.trim()}","albums":[{"title":"...","year":2000,"included":true,"reason":"Original studio album"}]}`;
-
-      let text = await askAI({
-        instructions: 'You are a careful music discography researcher. Return only valid JSON. Never insert citation markers, footnotes, or any non-JSON characters inside the JSON output.',
-        input: prompt,
-        useWebSearch: true,
-        maxOutputTokens: 4500
-      });
-
-      let parsed = tryExtractJson(text);
-
-      if (!parsed) {
-        text = await askAI({
-          instructions: 'You are a careful music discography researcher. Return only valid JSON. Never insert citation markers, footnotes, or any non-JSON characters inside the JSON output. Your previous response was not valid JSON. Fix this.',
-          input: prompt,
-          useWebSearch: true,
-          maxOutputTokens: 4500
-        });
-        parsed = tryExtractJson(text);
+      const artistName = artist.trim();
+      const known = KNOWN_DISCOGRAPHIES[artistName.toLowerCase()];
+      if (known) {
+        return NextResponse.json({ text: JSON.stringify(known), parsed: known });
       }
 
-      if (!parsed) throw new Error('No valid JSON object was found in the AI response.');
+      const prompt = `Return a compact JSON object for the main discography of "${artistName}". Include original studio albums of new material in chronological order. Also include obvious major non-included album-length releases only if they are commonly confused with studio albums, such as re-recordings, live albums, compilations, Christmas albums, soundtracks, or anthologies. Set included true only for original studio albums of entirely new material. Return ONLY valid JSON, no markdown, no citations, no commentary. Shape: {"artist":"${artistName}","albums":[{"title":"...","year":2000,"included":true,"reason":"Original studio album"}]}`;
+
+      const text = await askAI({
+        instructions: 'You are a careful music discography organiser. Return only compact valid JSON. Do not browse. Do not include citation markers, footnotes, markdown, or commentary.',
+        input: prompt,
+        useWebSearch: false,
+        maxOutputTokens: 1600
+      });
+
+      const parsed = normalizeDiscography(tryExtractJson(text), artistName);
+      if (!parsed.albums.length) throw new Error('No valid album list was found in the AI response.');
       return NextResponse.json({ text, parsed });
     }
 
