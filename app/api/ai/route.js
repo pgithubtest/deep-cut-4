@@ -104,7 +104,7 @@ async function createAlbumIntroWithTrackMap({ prompt, mode, useWebSearch = true 
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { action, artist, albums, messages = [], mode = 'deep', track } = body;
+    const { action, artist, albums, messages = [], mode = 'deep', track, phase, status } = body;
 
     if (action === 'buildDiscography') {
       if (!artist?.trim()) throw new Error('Artist is missing.');
@@ -144,6 +144,18 @@ export async function POST(request) {
       return NextResponse.json({ text, messages: newMessages });
     }
 
+    if (action === 'catchUp') {
+      const prompt = `The user is returning to a saved listening session. Give a concise spoken catch-up before they continue. Current saved phase: ${phase || 'unknown'}. Current status: ${status || 'unknown'}. Current track: ${track ? `${track.num}: ${track.title}` : 'none'}. Summarise where they are in the artist journey and album arc, what they should remember, and what to do next. Keep it under 75 seconds. Do not give a full song breakdown. Do not change the listening mode. End with one clear next step.`;
+      const input = [...asConversationInput(messages), { role: 'user', content: prompt }];
+      const text = await askAI({
+        instructions: SYSTEM_PROMPT + modeNote(mode) + '\n\nThis is a one-off catch-up only. Do not treat catch-up as a persistent mode.',
+        input,
+        useWebSearch: false,
+        maxOutputTokens: 1200
+      });
+      return NextResponse.json({ text, messages: [...messages, { role: 'user', content: prompt }, { role: 'assistant', content: text }] });
+    }
+
     if (action === 'startAlbum') {
       const included = Array.isArray(albums) ? albums.filter((album) => album.included) : [];
       const first = included[0];
@@ -156,7 +168,6 @@ export async function POST(request) {
 
     if (action === 'nextAlbum') {
       const prompt = 'The user is ready for the next album. Generate the PART 1 album scene-setting script for the next album in the confirmed discography. End with the cold listen prompt for track 1.';
-      const input = [...asConversationInput(messages), { role: 'user', content: prompt }];
       const jsonPrompt = `${prompt}\n\nReturn ONLY valid JSON, no markdown, with this shape:\n{"intro":"full spoken album intro script ending with the cold-listen instruction","trackMap":[{"num":"1","title":"Track title","essential":true,"essentialReason":"One short reason, only if essential is true"}]}\n\nRules for trackMap: include the original standard tracklist in order. Set essential=true only for songs the user really should not casually skip because they are central to the album identity, artist arc, cultural reception, or later evolution. Most songs should be false. Keep essentialReason under 18 words.`;
 
       const raw = await askAI({
