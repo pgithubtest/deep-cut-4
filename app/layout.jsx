@@ -1,5 +1,6 @@
 import './globals.css';
 import './polish.css';
+import CatchUpEnhancer from './catchup-enhancer';
 
 export const metadata = {
   title: 'Deep Cut',
@@ -9,7 +10,10 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <CatchUpEnhancer />
+      </body>
     </html>
   );
 }
