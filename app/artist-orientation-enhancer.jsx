@@ -32,11 +32,17 @@ function writeCache(cache) {
   window.localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
 }
 
-function currentConfirmingArtist() {
-  const heading = document.querySelector('.eyebrow');
+function getConfirmingScreen() {
   const title = document.querySelector('.h2');
-  if (!heading || title?.textContent?.trim() !== 'Start at the beginning.') return '';
-  return heading.textContent.trim();
+  const artistHeading = document.querySelector('.eyebrow');
+  if (!title || !artistHeading || title.textContent.trim() !== 'Start at the beginning.') return null;
+  const screen = title.closest('.fade-in');
+  if (!screen) return null;
+  return { screen, artist: artistHeading.textContent.trim() };
+}
+
+function getBeginButton(screen) {
+  return Array.from(screen.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Begin with the debut');
 }
 
 function renderParagraphs(container, text) {
@@ -48,10 +54,10 @@ function renderParagraphs(container, text) {
   });
 }
 
-function buildCard(artist) {
-  const card = document.createElement('div');
-  card.className = 'artist-orientation-card fade-in';
-  card.dataset.artist = artist;
+function buildOrientationScreen(artist) {
+  const screen = document.createElement('div');
+  screen.className = 'artist-orientation-screen fade-in';
+  screen.dataset.artist = artist;
 
   const kicker = document.createElement('div');
   kicker.className = 'artist-orientation-kicker';
@@ -63,15 +69,28 @@ function buildCard(artist) {
 
   const body = document.createElement('div');
   body.className = 'artist-orientation-body';
-
   const loading = document.createElement('p');
   loading.textContent = 'Finding the shape of the journey...';
   body.appendChild(loading);
 
-  card.appendChild(kicker);
-  card.appendChild(title);
-  card.appendChild(body);
-  return { card, body };
+  const actions = document.createElement('div');
+  actions.className = 'actions actions-large artist-orientation-actions';
+
+  const begin = document.createElement('button');
+  begin.className = 'bp artist-orientation-begin';
+  begin.textContent = 'Begin with the debut';
+
+  const back = document.createElement('button');
+  back.className = 'bg artist-orientation-back';
+  back.textContent = 'Back to albums';
+
+  actions.appendChild(begin);
+  actions.appendChild(back);
+  screen.appendChild(kicker);
+  screen.appendChild(title);
+  screen.appendChild(body);
+  screen.appendChild(actions);
+  return { screen, body, begin, back };
 }
 
 async function fetchOrientation(artist) {
@@ -79,56 +98,75 @@ async function fetchOrientation(artist) {
   const response = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'generate',
-      prompt,
-      messages: [],
-      mode: 'deep'
-    })
+    body: JSON.stringify({ action: 'generate', prompt, messages: [], mode: 'deep' })
   });
-
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error || 'Artist orientation failed.');
   return cleanText(data.text || '');
 }
 
-async function installArtistOrientation() {
-  const artist = currentConfirmingArtist();
-  if (!artist) return;
-
-  const title = document.querySelector('.h2');
-  const existing = document.querySelector('.artist-orientation-card');
-  if (existing?.dataset.artist === artist) return;
-  existing?.remove();
-
-  const { card, body } = buildCard(artist);
-  title.insertAdjacentElement('beforebegin', card);
-
+async function populateOrientation(body, artist) {
   const key = cacheKeyFor(artist);
   const cache = readCache();
   if (cache[key]) {
     renderParagraphs(body, cache[key]);
     return;
   }
-
   try {
     const text = await fetchOrientation(artist);
     if (!text) throw new Error('Empty artist orientation.');
-    const nextCache = { ...cache, [key]: text };
-    writeCache(nextCache);
+    writeCache({ ...cache, [key]: text });
     renderParagraphs(body, text);
   } catch {
     renderParagraphs(body, `This catalogue is best heard as an arc, not a playlist. Start by listening for what ${artist} keeps returning to: the emotional pressure, the formal habits, and the way each record changes the stakes. The first album is not just the beginning. It is the baseline that will make every later transformation easier to hear.`);
   }
 }
 
+function showOrientationGate({ screen, artist, beginButton }) {
+  if (screen.querySelector('.artist-orientation-screen')) return;
+  Array.from(screen.children).forEach((child) => child.classList.add('artist-orientation-hidden'));
+  const built = buildOrientationScreen(artist);
+  screen.prepend(built.screen);
+
+  built.back.addEventListener('click', () => {
+    built.screen.remove();
+    Array.from(screen.children).forEach((child) => child.classList.remove('artist-orientation-hidden'));
+  });
+
+  built.begin.addEventListener('click', () => {
+    beginButton.dataset.orientationBypass = 'true';
+    beginButton.click();
+  });
+
+  populateOrientation(built.body, artist);
+}
+
+function installArtistOrientationGate() {
+  const confirming = getConfirmingScreen();
+  if (!confirming?.artist) return;
+  document.querySelector('.artist-orientation-card')?.remove();
+  const beginButton = getBeginButton(confirming.screen);
+  if (!beginButton || beginButton.dataset.artistOrientationGate === 'true') return;
+
+  beginButton.dataset.artistOrientationGate = 'true';
+  beginButton.addEventListener('click', (event) => {
+    if (beginButton.dataset.orientationBypass === 'true') {
+      beginButton.dataset.orientationBypass = 'false';
+      return;
+    }
+    if (beginButton.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    showOrientationGate({ screen: confirming.screen, artist: confirming.artist, beginButton });
+  }, true);
+}
+
 export default function ArtistOrientationEnhancer() {
   useEffect(() => {
-    installArtistOrientation();
-    const observer = new MutationObserver(() => installArtistOrientation());
+    installArtistOrientationGate();
+    const observer = new MutationObserver(() => installArtistOrientationGate());
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, []);
-
   return null;
 }
