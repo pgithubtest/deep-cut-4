@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 const EXAMPLES = ['Radiohead', 'Taylor Swift', 'Joni Mitchell', 'Kendrick Lamar', 'The National', 'David Bowie', 'Fleetwood Mac', 'Nick Cave'];
 const STORAGE_KEY = 'deep-cut-active-session-v1';
 const RESUMABLE_PHASES = ['confirming', 'artist_orientation', 'album_intro', 'cold', 'breakdown', 'album_wrap'];
+const PREVIOUS_PHASES = ['album_intro', 'cold', 'breakdown', 'album_wrap'];
 
 const LOAD_MSGS = {
   disco: ['BUILDING THE DISCOGRAPHY', 'Mapping the releases...', 'Finding the catalogue...'],
@@ -103,6 +104,7 @@ function fallbackArtistOrientation(artistName) {
 export default function App() {
   const [phase, setPhase] = useState('landing');
   const [resumePhase, setResumePhase] = useState(null);
+  const [previousScreen, setPreviousScreen] = useState(null);
   const [artistInput, setArtistInput] = useState('');
   const [artist, setArtist] = useState('');
   const [albums, setAlbums] = useState([]);
@@ -137,6 +139,7 @@ export default function App() {
       setTrack(saved.track || null);
       setTrackMap(Array.isArray(saved.trackMap) ? saved.trackMap : []);
       setShowExcluded(Boolean(saved.showExcluded));
+      setPreviousScreen(saved.previousScreen || null);
       setResumePhase(RESUMABLE_PHASES.includes(saved.resumePhase) ? saved.resumePhase : 'confirming');
       setPhase('landing');
     } catch {
@@ -162,6 +165,7 @@ export default function App() {
       track,
       trackMap,
       showExcluded,
+      previousScreen,
       resumePhase: phaseToSave,
       savedAt: Date.now()
     };
@@ -171,13 +175,52 @@ export default function App() {
     } catch {
       // If storage is full or unavailable, the in-memory session still works.
     }
-  }, [phase, resumePhase, artist, albums, messages, content, artistOrientation, mode, status, replay, replayReason, track, trackMap, showExcluded]);
+  }, [phase, resumePhase, previousScreen, artist, albums, messages, content, artistOrientation, mode, status, replay, replayReason, track, trackMap, showExcluded]);
 
   useEffect(() => {
     if (topRef.current && ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase)) {
       topRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [content, phase]);
+
+  function currentScreenSnapshot(currentPhase = phase) {
+    return {
+      phase: currentPhase,
+      resumePhase: currentPhase,
+      messages,
+      content,
+      artistOrientation,
+      mode,
+      status,
+      replay,
+      replayReason,
+      track,
+      trackMap,
+      showExcluded
+    };
+  }
+
+  function rememberCurrentScreen(currentPhase = phase) {
+    if (!RESUMABLE_PHASES.includes(currentPhase) || currentPhase === 'loading') return;
+    setPreviousScreen(currentScreenSnapshot(currentPhase));
+  }
+
+  function goPreviousScreen() {
+    if (!previousScreen?.phase) return;
+    setMessages(Array.isArray(previousScreen.messages) ? previousScreen.messages : []);
+    setContent(previousScreen.content || '');
+    setArtistOrientation(previousScreen.artistOrientation || artistOrientation);
+    setMode(previousScreen.mode || 'deep');
+    setStatus(previousScreen.status || '');
+    setReplay(previousScreen.replay || null);
+    setReplayReason(previousScreen.replayReason || '');
+    setTrack(previousScreen.track || null);
+    setTrackMap(Array.isArray(previousScreen.trackMap) ? previousScreen.trackMap : []);
+    setShowExcluded(Boolean(previousScreen.showExcluded));
+    setResumePhase(RESUMABLE_PHASES.includes(previousScreen.resumePhase) ? previousScreen.resumePhase : previousScreen.phase);
+    setPhase(previousScreen.phase);
+    setPreviousScreen(null);
+  }
 
   function updateGeneratedText(text) {
     const parsedStatus = parseStatus(text);
@@ -228,6 +271,7 @@ export default function App() {
 
   function clearCurrentSessionForNewArtist() {
     setResumePhase(null);
+    setPreviousScreen(null);
     setAlbums([]);
     setMessages([]);
     setContent('');
@@ -295,6 +339,7 @@ export default function App() {
   }
 
   async function handleConfirm() {
+    rememberCurrentScreen();
     setLoading(true);
     setErr('');
     setLoadMsg(pickMsg('intro'));
@@ -315,12 +360,14 @@ export default function App() {
   }
 
   function goToCold() {
+    rememberCurrentScreen();
     const coldListen = parseColdListen(content);
     setColdTrack(coldListen || { num: '1', title: 'the first track' });
   }
 
   async function handleListened() {
     if (!track) return;
+    rememberCurrentScreen();
     setLoading(true);
     setErr('');
     setLoadMsg(pickMsg('break'));
@@ -370,6 +417,7 @@ export default function App() {
   }
 
   async function handleSkipBreakdown() {
+    rememberCurrentScreen();
     const nextMappedTrack = getNextMappedTrack();
     if (nextMappedTrack) {
       setReplay(null);
@@ -382,6 +430,7 @@ export default function App() {
   }
 
   async function handleNext() {
+    rememberCurrentScreen();
     const nextLine = parseNextLine(content);
     if (nextLine && isLastTrack(nextLine)) {
       await generateWithPrompt('Generate the PART 3 end-of-album reflection and wrap-up script. Include the discography map update.', 'album_wrap', 'wrap');
@@ -407,6 +456,7 @@ export default function App() {
   }
 
   async function handleNextAlbum() {
+    rememberCurrentScreen();
     setReplay(null);
     setReplayReason('');
     setLoading(true);
@@ -435,6 +485,7 @@ export default function App() {
   const resumeSummary = status || (track ? `Track ${track.num} · ${track.title}` : `${included.length} studio album${included.length !== 1 ? 's' : ''} ready`);
   const trackInfo = currentTrackInfo();
   const showEssentialNote = phase === 'cold' && trackInfo?.essential;
+  const canGoPrevious = Boolean(previousScreen?.phase && PREVIOUS_PHASES.includes(phase));
 
   return (
     <div className="app">
@@ -551,6 +602,7 @@ export default function App() {
         {inSession && (
           <div ref={topRef} className="mode-hdr">
             <button className="home-btn" onClick={goHome}>← Home</button>
+            {canGoPrevious && <button className="home-btn previous-btn" onClick={goPreviousScreen}>← Previous</button>}
             <span className="artist-lbl">{artist}</span>
             <div className="mode-btns">
               {[['deep', 'Deep listen'], ['commute', 'Commute'], ['reentry', 'Re-entry']].map(([key, label]) => (
