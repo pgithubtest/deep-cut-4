@@ -532,14 +532,12 @@ export default function App() {
               {showEssentialNote && (
                 <div className="essential-note">
                   <div className="essential-label">Essential listen</div>
-                  <div className="essential-reason">{trackInfo.essentialReason}</div>
                 </div>
               )}
               <div className="cinstr">Open Spotify. Go in cold. Come back when you're done.</div>
               <button className="bp cbtn" onClick={handleListened}>Show me the breakdown</button>
               <div className="skip-actions">
                 <button className="bg" onClick={handleSkipBreakdown}>Skip breakdown</button>
-                <button className="bg" onClick={handleNextAlbum}>Move to next album</button>
               </div>
             </div>
           </div>
