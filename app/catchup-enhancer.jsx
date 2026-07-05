@@ -212,40 +212,71 @@ async function catchUpSession(session, resumeAction, button) {
   }
 }
 
-function normaliseActiveResumeCard() {
-  const resumeCard = document.querySelector('.resume-card');
-  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
-  if (!resumeCard || !current?.artist || resumeCard.dataset.normalised === 'true') return;
+function buildSessionRow(session, { resumeAction, catchUpAction, active = false } = {}) {
+  const row = document.createElement('div');
+  row.className = active ? 'session-row active-session-row' : 'session-row';
 
-  resumeCard.dataset.normalised = 'true';
-  resumeCard.classList.add('session-row-active');
+  const info = document.createElement('div');
+  info.className = 'session-info';
 
-  const title = resumeCard.querySelector('.resume-title');
-  if (title) title.textContent = current.artist;
+  const title = document.createElement('div');
+  title.className = 'session-title';
+  title.textContent = session.artist;
 
-  const meta = resumeCard.querySelector('.resume-meta');
-  if (meta) meta.textContent = formatSessionMeta(current);
+  const meta = document.createElement('div');
+  meta.className = 'session-meta';
+  meta.textContent = formatSessionMeta(session);
 
-  const resumeButton = resumeCard.querySelector('.resume-btn');
-  if (resumeButton) resumeButton.textContent = 'Resume';
+  info.appendChild(title);
+  info.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'session-actions';
+
+  const resume = document.createElement('button');
+  resume.className = 'bg session-resume';
+  resume.textContent = 'Resume';
+  resume.addEventListener('click', resumeAction);
+
+  const catchup = document.createElement('button');
+  catchup.className = 'bg session-catchup';
+  catchup.textContent = 'Catch up';
+  catchup.addEventListener('click', () => catchUpAction(catchup));
+
+  actions.appendChild(resume);
+  actions.appendChild(catchup);
+  row.appendChild(info);
+  row.appendChild(actions);
+  return row;
 }
 
-function addCatchUpButton() {
-  normaliseActiveResumeCard();
-
+function renderActiveSessionRow() {
   const resumeCard = document.querySelector('.resume-card');
   const resumeButton = resumeCard?.querySelector('.resume-btn');
-  if (!resumeCard || !resumeButton || resumeCard.querySelector('.catchup-btn')) return;
-
   const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
-  if (!current?.artist) return;
+  if (!resumeCard || !resumeButton || !current?.artist) return;
 
-  const button = document.createElement('button');
-  button.className = 'bg catchup-btn';
-  button.textContent = 'Catch up';
-  button.addEventListener('click', () => catchUpSession(current, () => resumeButton.click(), button));
+  resumeCard.classList.add('resume-card-hidden');
 
-  resumeButton.insertAdjacentElement('afterend', button);
+  const existing = document.querySelector('.active-session-shell');
+  if (existing) return;
+
+  const shell = document.createElement('div');
+  shell.className = 'active-session-shell';
+
+  const label = document.createElement('div');
+  label.className = 'session-library-label active-session-label';
+  label.textContent = 'Continue listening';
+
+  const row = buildSessionRow(current, {
+    active: true,
+    resumeAction: () => resumeButton.click(),
+    catchUpAction: (button) => catchUpSession(current, () => resumeButton.click(), button)
+  });
+
+  shell.appendChild(label);
+  shell.appendChild(row);
+  resumeCard.insertAdjacentElement('beforebegin', shell);
 }
 
 function renderSessionLibrary() {
@@ -266,40 +297,10 @@ function renderSessionLibrary() {
   section.className = 'session-library';
 
   sessions.forEach((session) => {
-    const row = document.createElement('div');
-    row.className = 'session-row';
-
-    const info = document.createElement('div');
-    info.className = 'session-info';
-
-    const title = document.createElement('div');
-    title.className = 'session-title';
-    title.textContent = session.artist;
-
-    const meta = document.createElement('div');
-    meta.className = 'session-meta';
-    meta.textContent = formatSessionMeta(session);
-
-    info.appendChild(title);
-    info.appendChild(meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'session-actions';
-
-    const resume = document.createElement('button');
-    resume.className = 'bg session-resume';
-    resume.textContent = 'Resume';
-    resume.addEventListener('click', () => activateSession(session));
-
-    const catchup = document.createElement('button');
-    catchup.className = 'bg session-catchup';
-    catchup.textContent = 'Catch up';
-    catchup.addEventListener('click', () => catchUpSession(session, () => activateSession(session), catchup));
-
-    actions.appendChild(resume);
-    actions.appendChild(catchup);
-    row.appendChild(info);
-    row.appendChild(actions);
+    const row = buildSessionRow(session, {
+      resumeAction: () => activateSession(session),
+      catchUpAction: (button) => catchUpSession(session, () => activateSession(session), button)
+    });
     section.appendChild(row);
   });
 
@@ -314,10 +315,10 @@ function renderSessionLibrary() {
 export default function CatchUpEnhancer() {
   useEffect(() => {
     installStorageBridge();
-    addCatchUpButton();
+    renderActiveSessionRow();
     renderSessionLibrary();
     const observer = new MutationObserver(() => {
-      addCatchUpButton();
+      renderActiveSessionRow();
       renderSessionLibrary();
     });
     observer.observe(document.body, { childList: true, subtree: true });
