@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 const EXAMPLES = ['Radiohead', 'Joni Mitchell', 'Kendrick Lamar', 'The National', 'David Bowie', 'Fleetwood Mac', 'Frank Ocean', 'Nick Cave'];
+const STORAGE_KEY = 'deep-cut-active-session-v1';
+const RESUMABLE_PHASES = ['confirming', 'album_intro', 'cold', 'breakdown', 'album_wrap'];
 
 const LOAD_MSGS = {
   disco: ['BUILDING THE DISCOGRAPHY', 'Mapping the releases...', 'Finding the catalogue...'],
@@ -95,6 +97,7 @@ async function callBackend(payload) {
 
 export default function App() {
   const [phase, setPhase] = useState('landing');
+  const [resumePhase, setResumePhase] = useState(null);
   const [artistInput, setArtistInput] = useState('');
   const [artist, setArtist] = useState('');
   const [albums, setAlbums] = useState([]);
@@ -112,6 +115,54 @@ export default function App() {
   const topRef = useRef(null);
 
   useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (!saved?.artist) return;
+      setArtist(saved.artist || '');
+      setAlbums(Array.isArray(saved.albums) ? saved.albums : []);
+      setMessages(Array.isArray(saved.messages) ? saved.messages : []);
+      setContent(saved.content || '');
+      setMode(saved.mode || 'deep');
+      setStatus(saved.status || '');
+      setReplay(saved.replay || null);
+      setReplayReason(saved.replayReason || '');
+      setTrack(saved.track || null);
+      setShowExcluded(Boolean(saved.showExcluded));
+      setResumePhase(RESUMABLE_PHASES.includes(saved.resumePhase) ? saved.resumePhase : 'confirming');
+      setPhase('landing');
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    const phaseToSave = phase === 'landing' || phase === 'loading' ? resumePhase : phase;
+    if (!artist || !RESUMABLE_PHASES.includes(phaseToSave)) return;
+    if (!albums.length && !messages.length && !content) return;
+
+    const snapshot = {
+      artist,
+      albums,
+      messages,
+      content,
+      mode,
+      status,
+      replay,
+      replayReason,
+      track,
+      showExcluded,
+      resumePhase: phaseToSave,
+      savedAt: Date.now()
+    };
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // If storage is full or unavailable, the in-memory session still works.
+    }
+  }, [phase, resumePhase, artist, albums, messages, content, mode, status, replay, replayReason, track, showExcluded]);
+
+  useEffect(() => {
     if (topRef.current && ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase)) {
       topRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -123,12 +174,41 @@ export default function App() {
     setContent(text);
   }
 
+  function goHome() {
+    if (RESUMABLE_PHASES.includes(phase)) setResumePhase(phase);
+    setErr('');
+    setPhase('landing');
+  }
+
+  function resumeListening() {
+    if (RESUMABLE_PHASES.includes(resumePhase)) {
+      setErr('');
+      setPhase(resumePhase);
+    }
+  }
+
+  function clearCurrentSessionForNewArtist() {
+    setResumePhase(null);
+    setAlbums([]);
+    setMessages([]);
+    setContent('');
+    setStatus('');
+    setReplay(null);
+    setReplayReason('');
+    setTrack(null);
+    setShowExcluded(false);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+  }
+
   async function handleBuild() {
     if (!artistInput.trim()) return;
     setLoading(true);
     setErr('');
     setLoadMsg(pickMsg('disco'));
     setPhase('loading');
+    clearCurrentSessionForNewArtist();
     const nextArtist = artistInput.trim();
     setArtist(nextArtist);
     try {
@@ -136,6 +216,7 @@ export default function App() {
       setAlbums(data.parsed.albums || []);
       setMessages([{ role: 'user', content: `Build discography for ${nextArtist}` }, { role: 'assistant', content: data.text }]);
       setShowExcluded(false);
+      setResumePhase('confirming');
       setPhase('confirming');
     } catch (error) {
       setErr(`Couldn't load the discography: ${error.message}`);
@@ -158,6 +239,7 @@ export default function App() {
       const data = await callBackend({ action: 'startAlbum', albums, mode });
       setMessages(data.messages);
       updateGeneratedText(data.text);
+      setResumePhase('album_intro');
       setPhase('album_intro');
     } catch (error) {
       setErr(`Failed to start: ${error.message}`);
@@ -170,6 +252,7 @@ export default function App() {
   function goToCold() {
     const coldListen = parseColdListen(content);
     setTrack(coldListen || { num: '1', title: 'the first track' });
+    setResumePhase('cold');
     setPhase('cold');
   }
 
@@ -185,6 +268,7 @@ export default function App() {
       setReplay(parseReplay(data.text));
       setReplayReason(parseReplayReason(data.text));
       updateGeneratedText(data.text);
+      setResumePhase('breakdown');
       setPhase('breakdown');
     } catch (error) {
       setErr(`Failed to load breakdown: ${error.message}`);
@@ -203,6 +287,7 @@ export default function App() {
       const data = await callBackend({ action: 'generate', prompt, messages, mode });
       setMessages(data.messages);
       updateGeneratedText(data.text);
+      setResumePhase(nextPhase);
       setPhase(nextPhase);
       return data;
     } catch (error) {
@@ -224,6 +309,7 @@ export default function App() {
       const coldListen = parseColdListen(nextLine);
       if (coldListen) {
         setTrack(coldListen);
+        setResumePhase('cold');
         setPhase('cold');
         return;
       }
@@ -237,6 +323,7 @@ export default function App() {
     const coldListen = parseColdListen(data.text);
     if (coldListen) {
       setTrack(coldListen);
+      setResumePhase('cold');
       setPhase('cold');
     }
   }
@@ -250,6 +337,8 @@ export default function App() {
   const included = albums.filter((album) => album.included);
   const excluded = albums.filter((album) => !album.included);
   const inSession = ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase);
+  const canResume = Boolean(artist && RESUMABLE_PHASES.includes(resumePhase) && (albums.length || messages.length || content));
+  const resumeSummary = status || (track ? `Track ${track.num} · ${track.title}` : `${included.length} studio album${included.length !== 1 ? 's' : ''} ready`);
 
   return (
     <div className="app">
@@ -276,8 +365,17 @@ export default function App() {
 
         {phase === 'landing' && (
           <div className="input-wrap fade-in">
+            {canResume && (
+              <div className="resume-card">
+                <div className="resume-kicker">Saved session</div>
+                <div className="resume-title">Resume {artist}</div>
+                <div className="resume-meta">{resumeSummary}</div>
+                <button className="bp resume-btn" onClick={resumeListening}>Resume listening</button>
+              </div>
+            )}
+            {canResume && <div className="resume-divider">or start something new</div>}
             <input className="ai" value={artistInput} onChange={(event) => setArtistInput(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && !loading && handleBuild()} placeholder="Enter an artist" autoFocus />
-            <button className="bp" onClick={handleBuild} disabled={!artistInput.trim() || loading}>Begin the discography</button>
+            <button className="bp" onClick={handleBuild} disabled={!artistInput.trim() || loading}>{canResume ? 'Start a different discography' : 'Begin the discography'}</button>
             <div className="chips-lbl">Or start with one of these</div>
             <div className="chips">
               {EXAMPLES.map((example) => <button key={example} className="chip" onClick={() => setArtistInput(example)}>{example}</button>)}
@@ -337,13 +435,14 @@ export default function App() {
 
             <div className="actions actions-large">
               <button className="bp" onClick={handleConfirm} disabled={included.length === 0}>{included.length === 0 ? 'Add at least one album to continue' : 'Begin with the debut'}</button>
-              <button className="bg" onClick={() => { setPhase('landing'); setAlbums([]); }}>Search a different artist</button>
+              <button className="bg" onClick={goHome}>Home</button>
             </div>
           </div>
         )}
 
         {inSession && (
           <div ref={topRef} className="mode-hdr">
+            <button className="home-btn" onClick={goHome}>← Home</button>
             <span className="artist-lbl">{artist}</span>
             <div className="mode-btns">
               {[['deep', 'Deep listen'], ['commute', 'Commute'], ['reentry', 'Re-entry']].map(([key, label]) => (
@@ -357,7 +456,7 @@ export default function App() {
           <div className="fade-in">
             <div className="eyebrow">Before you listen</div>
             <div className="content">{renderParagraphs(content)}</div>
-            <div className="actions"><button className="bg" onClick={() => setPhase('landing')}>Pause</button><button className="bp" onClick={goToCold}>Begin with track 1</button></div>
+            <div className="actions"><button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={goToCold}>Begin with track 1</button></div>
           </div>
         )}
 
@@ -380,7 +479,7 @@ export default function App() {
           <div className="fade-in">
             <div className="eyebrow">After the album</div>
             <div className="content">{renderParagraphs(content)}</div>
-            <div className="actions"><button className="bg" onClick={() => setPhase('landing')}>Take a break</button><button className="bp" onClick={handleNextAlbum}>Next record</button></div>
+            <div className="actions"><button className="bg" onClick={goHome}>Home</button><button className="bp" onClick={handleNextAlbum}>Next record</button></div>
           </div>
         )}
       </div>
