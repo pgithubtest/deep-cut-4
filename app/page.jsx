@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const EXAMPLES = ['Radiohead', 'Joni Mitchell', 'Kendrick Lamar', 'The National', 'David Bowie', 'Fleetwood Mac', 'Frank Ocean', 'Nick Cave'];
+const EXAMPLES = ['Radiohead', 'Taylor Swift', 'Joni Mitchell', 'Kendrick Lamar', 'The National', 'David Bowie', 'Fleetwood Mac', 'Nick Cave'];
 const STORAGE_KEY = 'deep-cut-active-session-v1';
 const RESUMABLE_PHASES = ['confirming', 'album_intro', 'cold', 'breakdown', 'album_wrap'];
 
