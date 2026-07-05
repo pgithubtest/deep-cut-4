@@ -78,8 +78,18 @@ async function callBackend(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed.');
+
+  const rawText = await response.text();
+  let data = null;
+
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    const plainMessage = rawText?.trim()?.slice(0, 500) || 'The server returned an empty response.';
+    throw new Error(`The backend did not return JSON. Server said: ${plainMessage}`);
+  }
+
+  if (!response.ok) throw new Error(data?.error || 'Request failed.');
   return data;
 }
 
