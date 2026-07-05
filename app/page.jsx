@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 
 const EXAMPLES = ['Radiohead', 'Taylor Swift', 'Joni Mitchell', 'Kendrick Lamar', 'The National', 'David Bowie', 'Fleetwood Mac', 'Nick Cave'];
 const STORAGE_KEY = 'deep-cut-active-session-v1';
-const RESUMABLE_PHASES = ['confirming', 'album_intro', 'cold', 'breakdown', 'album_wrap'];
+const RESUMABLE_PHASES = ['confirming', 'artist_orientation', 'album_intro', 'cold', 'breakdown', 'album_wrap'];
 
 const LOAD_MSGS = {
   disco: ['BUILDING THE DISCOGRAPHY', 'Mapping the releases...', 'Finding the catalogue...'],
+  orientation: ['Finding the shape of the journey...', 'Preparing the artist lens...', 'Opening the catalogue...'],
   intro: ['Building the listening path...', 'Finding the first record...', 'Preparing the context...'],
   break: ['Reading the track...', 'Working through the songcraft...', 'Unpacking the song...'],
   wrap: ['Mapping the discography...', 'Preparing the album reflection...'],
@@ -95,6 +96,10 @@ async function callBackend(payload) {
   return data;
 }
 
+function fallbackArtistOrientation(artistName) {
+  return `This catalogue is best heard as an arc, not a playlist. Start by listening for what ${artistName} keeps returning to: the emotional pressure, the formal habits, and the way each record changes the stakes. The first album is not just the beginning. It is the baseline that will make every later transformation easier to hear.`;
+}
+
 export default function App() {
   const [phase, setPhase] = useState('landing');
   const [resumePhase, setResumePhase] = useState(null);
@@ -103,6 +108,7 @@ export default function App() {
   const [albums, setAlbums] = useState([]);
   const [messages, setMessages] = useState([]);
   const [content, setContent] = useState('');
+  const [artistOrientation, setArtistOrientation] = useState('');
   const [mode, setMode] = useState('deep');
   const [status, setStatus] = useState('');
   const [replay, setReplay] = useState(null);
@@ -123,6 +129,7 @@ export default function App() {
       setAlbums(Array.isArray(saved.albums) ? saved.albums : []);
       setMessages(Array.isArray(saved.messages) ? saved.messages : []);
       setContent(saved.content || '');
+      setArtistOrientation(saved.artistOrientation || '');
       setMode(saved.mode || 'deep');
       setStatus(saved.status || '');
       setReplay(saved.replay || null);
@@ -140,13 +147,14 @@ export default function App() {
   useEffect(() => {
     const phaseToSave = phase === 'landing' || phase === 'loading' ? resumePhase : phase;
     if (!artist || !RESUMABLE_PHASES.includes(phaseToSave)) return;
-    if (!albums.length && !messages.length && !content) return;
+    if (!albums.length && !messages.length && !content && !artistOrientation) return;
 
     const snapshot = {
       artist,
       albums,
       messages,
       content,
+      artistOrientation,
       mode,
       status,
       replay,
@@ -163,7 +171,7 @@ export default function App() {
     } catch {
       // If storage is full or unavailable, the in-memory session still works.
     }
-  }, [phase, resumePhase, artist, albums, messages, content, mode, status, replay, replayReason, track, trackMap, showExcluded]);
+  }, [phase, resumePhase, artist, albums, messages, content, artistOrientation, mode, status, replay, replayReason, track, trackMap, showExcluded]);
 
   useEffect(() => {
     if (topRef.current && ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase)) {
@@ -223,6 +231,7 @@ export default function App() {
     setAlbums([]);
     setMessages([]);
     setContent('');
+    setArtistOrientation('');
     setStatus('');
     setReplay(null);
     setReplayReason('');
@@ -262,6 +271,29 @@ export default function App() {
     setAlbums((previous) => previous.map((album, albumIndex) => albumIndex === index ? { ...album, included: !album.included } : album));
   }
 
+  async function handleArtistOrientation() {
+    if (artistOrientation) {
+      setResumePhase('artist_orientation');
+      setPhase('artist_orientation');
+      return;
+    }
+    setLoading(true);
+    setErr('');
+    setLoadMsg(pickMsg('orientation'));
+    setPhase('loading');
+    try {
+      const prompt = `Write a short artist orientation for someone about to listen through ${artist}'s main studio albums chronologically. Do not write a biography. Do not preview every album. Do not spoil the whole journey. Give one central thesis about why this artist matters, one sense of the career arc, and one listening lens to carry into the first album. Warm spoken style. 120 to 180 words. No headings. No bullets.`;
+      const data = await callBackend({ action: 'generate', prompt, messages: [], mode: 'deep' });
+      setArtistOrientation(data.text || fallbackArtistOrientation(artist));
+    } catch {
+      setArtistOrientation(fallbackArtistOrientation(artist));
+    } finally {
+      setResumePhase('artist_orientation');
+      setPhase('artist_orientation');
+      setLoading(false);
+    }
+  }
+
   async function handleConfirm() {
     setLoading(true);
     setErr('');
@@ -276,7 +308,7 @@ export default function App() {
       setPhase('album_intro');
     } catch (error) {
       setErr(`Failed to start: ${error.message}`);
-      setPhase('confirming');
+      setPhase('artist_orientation');
     } finally {
       setLoading(false);
     }
@@ -399,7 +431,7 @@ export default function App() {
   const included = albums.filter((album) => album.included);
   const excluded = albums.filter((album) => !album.included);
   const inSession = ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase);
-  const canResume = Boolean(artist && RESUMABLE_PHASES.includes(resumePhase) && (albums.length || messages.length || content));
+  const canResume = Boolean(artist && RESUMABLE_PHASES.includes(resumePhase) && (albums.length || messages.length || content || artistOrientation));
   const resumeSummary = status || (track ? `Track ${track.num} · ${track.title}` : `${included.length} studio album${included.length !== 1 ? 's' : ''} ready`);
   const trackInfo = currentTrackInfo();
   const showEssentialNote = phase === 'cold' && trackInfo?.essential;
@@ -498,8 +530,20 @@ export default function App() {
             )}
 
             <div className="actions actions-large">
-              <button className="bp" onClick={handleConfirm} disabled={included.length === 0}>{included.length === 0 ? 'Add at least one album to continue' : 'Begin with the debut'}</button>
+              <button className="bp" onClick={handleArtistOrientation} disabled={included.length === 0}>{included.length === 0 ? 'Add at least one album to continue' : 'Begin the journey'}</button>
               <button className="bg" onClick={goHome}>Home</button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'artist_orientation' && (
+          <div className="artist-orientation-screen fade-in">
+            <div className="artist-orientation-kicker">Before the catalogue</div>
+            <div className="artist-orientation-title">Why {artist} matters</div>
+            <div className="artist-orientation-body">{renderParagraphs(artistOrientation || fallbackArtistOrientation(artist))}</div>
+            <div className="actions actions-large artist-orientation-actions">
+              <button className="bg" onClick={() => setPhase('confirming')}>Back to albums</button>
+              <button className="bp" onClick={handleConfirm}>Start the first album</button>
             </div>
           </div>
         )}
