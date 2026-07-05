@@ -177,7 +177,9 @@ export default function App() {
   function formatColdStatus(nextTrack, currentMode = mode) {
     const existingParts = status.split(' · ');
     const albumName = existingParts[0] || artist;
-    return `${albumName} · Track ${nextTrack.num} · Next: ${nextTrack.title} · Mode: ${currentMode}`;
+    const totalMatch = status.match(/Track\s+\d+\s+of\s+(\d+)/i);
+    const total = totalMatch ? ` of ${totalMatch[1]}` : '';
+    return `${albumName} · Track ${nextTrack.num}${total} · Next: ${nextTrack.title} · Mode: ${currentMode}`;
   }
 
   function setColdTrack(nextTrack) {
