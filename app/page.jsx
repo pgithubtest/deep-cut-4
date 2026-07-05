@@ -108,6 +108,7 @@ export default function App() {
   const [replay, setReplay] = useState(null);
   const [replayReason, setReplayReason] = useState('');
   const [track, setTrack] = useState(null);
+  const [trackMap, setTrackMap] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadMsg, setLoadMsg] = useState('');
   const [err, setErr] = useState('');
@@ -127,6 +128,7 @@ export default function App() {
       setReplay(saved.replay || null);
       setReplayReason(saved.replayReason || '');
       setTrack(saved.track || null);
+      setTrackMap(Array.isArray(saved.trackMap) ? saved.trackMap : []);
       setShowExcluded(Boolean(saved.showExcluded));
       setResumePhase(RESUMABLE_PHASES.includes(saved.resumePhase) ? saved.resumePhase : 'confirming');
       setPhase('landing');
@@ -150,6 +152,7 @@ export default function App() {
       replay,
       replayReason,
       track,
+      trackMap,
       showExcluded,
       resumePhase: phaseToSave,
       savedAt: Date.now()
@@ -160,7 +163,7 @@ export default function App() {
     } catch {
       // If storage is full or unavailable, the in-memory session still works.
     }
-  }, [phase, resumePhase, artist, albums, messages, content, mode, status, replay, replayReason, track, showExcluded]);
+  }, [phase, resumePhase, artist, albums, messages, content, mode, status, replay, replayReason, track, trackMap, showExcluded]);
 
   useEffect(() => {
     if (topRef.current && ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase)) {
@@ -174,11 +177,17 @@ export default function App() {
     setContent(text);
   }
 
+  function currentTrackInfo(nextTrack = track) {
+    if (!nextTrack) return null;
+    return trackMap.find((mappedTrack) => String(mappedTrack.num) === String(nextTrack.num)) || null;
+  }
+
   function formatColdStatus(nextTrack, currentMode = mode) {
     const existingParts = status.split(' · ');
     const albumName = existingParts[0] || artist;
     const totalMatch = status.match(/Track\s+\d+\s+of\s+(\d+)/i);
-    const total = totalMatch ? ` of ${totalMatch[1]}` : '';
+    const totalFromMap = trackMap.length ? String(trackMap.length) : '';
+    const total = totalMatch ? ` of ${totalMatch[1]}` : totalFromMap ? ` of ${totalFromMap}` : '';
     return `${albumName} · Track ${nextTrack.num}${total} · Next: ${nextTrack.title} · Mode: ${currentMode}`;
   }
 
@@ -218,6 +227,7 @@ export default function App() {
     setReplay(null);
     setReplayReason('');
     setTrack(null);
+    setTrackMap([]);
     setShowExcluded(false);
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -260,6 +270,7 @@ export default function App() {
     try {
       const data = await callBackend({ action: 'startAlbum', albums, mode });
       setMessages(data.messages);
+      setTrackMap(Array.isArray(data.trackMap) ? data.trackMap : []);
       updateGeneratedText(data.text);
       setResumePhase('album_intro');
       setPhase('album_intro');
@@ -319,6 +330,25 @@ export default function App() {
     }
   }
 
+  function getNextMappedTrack() {
+    if (!track || !trackMap.length) return null;
+    const currentIndex = trackMap.findIndex((mappedTrack) => String(mappedTrack.num) === String(track.num));
+    if (currentIndex < 0) return null;
+    return trackMap[currentIndex + 1] || null;
+  }
+
+  async function handleSkipBreakdown() {
+    const nextMappedTrack = getNextMappedTrack();
+    if (nextMappedTrack) {
+      setReplay(null);
+      setReplayReason('');
+      setColdTrack(nextMappedTrack);
+      return;
+    }
+
+    await generateWithPrompt('Generate the PART 3 end-of-album reflection and wrap-up script. Include the discography map update.', 'album_wrap', 'wrap');
+  }
+
   async function handleNext() {
     const nextLine = parseNextLine(content);
     if (nextLine && isLastTrack(nextLine)) {
@@ -347,7 +377,23 @@ export default function App() {
   async function handleNextAlbum() {
     setReplay(null);
     setReplayReason('');
-    await generateWithPrompt('The user is ready for the next album. Generate the PART 1 album scene-setting script for the next album in the confirmed discography. End with the cold listen prompt for track 1.', 'album_intro', 'intro');
+    setLoading(true);
+    setErr('');
+    setLoadMsg(pickMsg('intro'));
+    setPhase('loading');
+    try {
+      const data = await callBackend({ action: 'nextAlbum', messages, mode });
+      setMessages(data.messages);
+      setTrackMap(Array.isArray(data.trackMap) ? data.trackMap : []);
+      updateGeneratedText(data.text);
+      setResumePhase('album_intro');
+      setPhase('album_intro');
+    } catch (error) {
+      setErr(error.message);
+      setPhase('album_wrap');
+    } finally {
+      setLoading(false);
+    }
   }
 
   const included = albums.filter((album) => album.included);
@@ -355,6 +401,8 @@ export default function App() {
   const inSession = ['album_intro', 'cold', 'breakdown', 'album_wrap'].includes(phase);
   const canResume = Boolean(artist && RESUMABLE_PHASES.includes(resumePhase) && (albums.length || messages.length || content));
   const resumeSummary = status || (track ? `Track ${track.num} · ${track.title}` : `${included.length} studio album${included.length !== 1 ? 's' : ''} ready`);
+  const trackInfo = currentTrackInfo();
+  const showEssentialNote = phase === 'cold' && trackInfo?.essential;
 
   return (
     <div className="app">
@@ -478,7 +526,22 @@ export default function App() {
 
         {phase === 'cold' && track && (
           <div className="fade-in">
-            <div className="cold"><div className="tnum">Track {track.num}</div><div className="tname">{track.title}</div><div className="cinstr">Open Spotify. Go in cold. Come back when you're done.</div><button className="bp cbtn" onClick={handleListened}>Show me the breakdown</button></div>
+            <div className="cold">
+              <div className="tnum">Track {track.num}</div>
+              <div className="tname">{track.title}</div>
+              {showEssentialNote && (
+                <div className="essential-note">
+                  <div className="essential-label">Essential listen</div>
+                  <div className="essential-reason">{trackInfo.essentialReason}</div>
+                </div>
+              )}
+              <div className="cinstr">Open Spotify. Go in cold. Come back when you're done.</div>
+              <button className="bp cbtn" onClick={handleListened}>Show me the breakdown</button>
+              <div className="skip-actions">
+                <button className="bg" onClick={handleSkipBreakdown}>Skip breakdown</button>
+                <button className="bg" onClick={handleNextAlbum}>Move to next album</button>
+              </div>
+            </div>
           </div>
         )}
 
