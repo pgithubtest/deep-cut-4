@@ -313,14 +313,43 @@ function renderSessionLibrary() {
   }
 }
 
+function spotifySearchUrl(artist, title) {
+  return `https://open.spotify.com/search/${encodeURIComponent(`${artist} ${title}`.trim())}`;
+}
+
+function renderSpotifyButton() {
+  const cold = document.querySelector('.cold');
+  if (!cold) return;
+
+  const title = cold.querySelector('.tname')?.textContent?.trim();
+  const session = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  const artist = session?.artist || document.querySelector('.artist-lbl')?.textContent?.trim() || '';
+  if (!artist || !title) return;
+
+  let link = cold.querySelector('.spotify-link');
+  if (!link) {
+    link = document.createElement('a');
+    link.className = 'spotify-link';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Open in Spotify';
+    cold.querySelector('.cinstr')?.insertAdjacentElement('afterend', link);
+  }
+
+  link.href = spotifySearchUrl(artist, title);
+  link.setAttribute('aria-label', `Open ${title} by ${artist} in Spotify`);
+}
+
 export default function CatchUpEnhancer() {
   useEffect(() => {
     installStorageBridge();
     renderActiveSessionRow();
     renderSessionLibrary();
+    renderSpotifyButton();
     const observer = new MutationObserver(() => {
       renderActiveSessionRow();
       renderSessionLibrary();
+      renderSpotifyButton();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
