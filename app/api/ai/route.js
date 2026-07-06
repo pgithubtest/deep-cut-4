@@ -86,33 +86,6 @@ function normalizeTrackMap(trackMap = []) {
     }));
 }
 
-function parseConfirmedAlbums(messages = []) {
-  const combined = messages.map((message) => String(message?.content || '')).join('\n');
-  const match = combined.match(/confirmed album list is:\s*(\[[\s\S]*?\])\.\s*Generate/i);
-  if (!match) return [];
-  try {
-    const parsed = JSON.parse(match[1]);
-    return Array.isArray(parsed) ? parsed.filter((album) => album?.title) : [];
-  } catch {
-    return [];
-  }
-}
-
-function pickNextAlbum(messages = []) {
-  const confirmedAlbums = parseConfirmedAlbums(messages);
-  if (!confirmedAlbums.length) return null;
-
-  const combined = messages.map((message) => String(message?.content || '')).join('\n').toLowerCase();
-  let latestIndex = -1;
-
-  confirmedAlbums.forEach((album, index) => {
-    const title = String(album.title || '').toLowerCase();
-    if (title && combined.includes(title)) latestIndex = Math.max(latestIndex, index);
-  });
-
-  return confirmedAlbums[latestIndex + 1] || null;
-}
-
 async function createAlbumIntroWithTrackMap({ prompt, mode, useWebSearch = true }) {
   const jsonPrompt = `${prompt}\n\nReturn ONLY valid JSON, no markdown, with this shape:\n{"intro":"full spoken album intro script ending with the cold-listen instruction","trackMap":[{"num":"1","title":"Track title","essential":true,"essentialReason":"One short reason, only if essential is true"}]}\n\nRules for trackMap: include the original standard tracklist in order. Set essential=true only for songs the user really should not casually skip because they are central to the album identity, artist arc, cultural reception, or later evolution. Most songs should be false. Keep essentialReason under 18 words.`;
 
@@ -194,10 +167,7 @@ export async function POST(request) {
     }
 
     if (action === 'nextAlbum') {
-      const nextAlbum = pickNextAlbum(messages);
-      const prompt = nextAlbum
-        ? `The user is ready for the next album. Generate the PART 1 album scene-setting script for "${nextAlbum.title}" (${nextAlbum.year}). End with the cold listen prompt for track 1.`
-        : 'The user is ready for the next album. Generate the PART 1 album scene-setting script for the next album in the confirmed discography. End with the cold listen prompt for track 1.';
+      const prompt = 'The user is ready for the next album. Generate the PART 1 album scene-setting script for the next album in the confirmed discography. End with the cold listen prompt for track 1.';
       const jsonPrompt = `${prompt}\n\nReturn ONLY valid JSON, no markdown, with this shape:\n{"intro":"full spoken album intro script ending with the cold-listen instruction","trackMap":[{"num":"1","title":"Track title","essential":true,"essentialReason":"One short reason, only if essential is true"}]}\n\nRules for trackMap: include the original standard tracklist in order. Set essential=true only for songs the user really should not casually skip because they are central to the album identity, artist arc, cultural reception, or later evolution. Most songs should be false. Keep essentialReason under 18 words.`;
 
       const raw = await askAI({
