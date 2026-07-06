@@ -122,6 +122,8 @@ export default function App() {
   const [err, setErr] = useState('');
   const [showExcluded, setShowExcluded] = useState(false);
   const topRef = useRef(null);
+  const breakdownPrefetchRef = useRef({ key: null, promise: null });
+  const breakdownCacheRef = useRef(new Map());
 
   useEffect(() => {
     try {
@@ -183,6 +185,10 @@ export default function App() {
     }
   }, [content, phase]);
 
+  useEffect(() => {
+    if (phase === 'cold' && track && !loading) primeTrackBreakdown();
+  }, [phase, track, messages, mode, artist, loading]);
+
   function currentScreenSnapshot(currentPhase = phase) {
     return {
       phase: currentPhase,
@@ -237,6 +243,46 @@ export default function App() {
     return trackMap.find((mappedTrack) => String(mappedTrack.num) === String(nextTrack.num)) || null;
   }
 
+  function getBreakdownCacheKey(nextTrack = track, nextMessages = messages, nextMode = mode) {
+    if (!artist || !nextTrack) return '';
+    const lastMessage = Array.isArray(nextMessages) && nextMessages.length ? nextMessages[nextMessages.length - 1]?.content || '' : '';
+    return JSON.stringify({
+      artist,
+      mode: nextMode,
+      trackNum: String(nextTrack.num || ''),
+      trackTitle: String(nextTrack.title || ''),
+      messagesLength: Array.isArray(nextMessages) ? nextMessages.length : 0,
+      lastMessage
+    });
+  }
+
+  function applyTrackBreakdownData(data) {
+    setMessages(data.messages);
+    setReplay(parseReplay(data.text));
+    setReplayReason(parseReplayReason(data.text));
+    updateGeneratedText(data.text);
+    setResumePhase('breakdown');
+    setPhase('breakdown');
+  }
+
+  function primeTrackBreakdown() {
+    const key = getBreakdownCacheKey();
+    if (!key || breakdownCacheRef.current.has(key)) return;
+    if (breakdownPrefetchRef.current.key === key && breakdownPrefetchRef.current.promise) return;
+
+    const promise = callBackend({ action: 'trackBreakdown', track, messages, mode })
+      .then((data) => {
+        breakdownCacheRef.current.set(key, data);
+        return data;
+      })
+      .catch(() => {
+        if (breakdownPrefetchRef.current.key === key) breakdownPrefetchRef.current = { key: null, promise: null };
+        return null;
+      });
+
+    breakdownPrefetchRef.current = { key, promise };
+  }
+
   function formatColdStatus(nextTrack, currentMode = mode) {
     const existingParts = status.split(' · ');
     const albumName = existingParts[0] || artist;
@@ -276,6 +322,8 @@ export default function App() {
   function clearCurrentSessionForNewArtist() {
     setResumePhase(null);
     setPreviousScreen(null);
+    breakdownPrefetchRef.current = { key: null, promise: null };
+    breakdownCacheRef.current.clear();
     setAlbums([]);
     setMessages([]);
     setContent('');
@@ -377,13 +425,20 @@ export default function App() {
     setLoadMsg(pickMsg('break'));
     setPhase('loading');
     try {
-      const data = await callBackend({ action: 'trackBreakdown', track, messages, mode });
-      setMessages(data.messages);
-      setReplay(parseReplay(data.text));
-      setReplayReason(parseReplayReason(data.text));
-      updateGeneratedText(data.text);
-      setResumePhase('breakdown');
-      setPhase('breakdown');
+      const key = getBreakdownCacheKey();
+      let data = key ? breakdownCacheRef.current.get(key) : null;
+
+      if (!data && key && breakdownPrefetchRef.current.key === key && breakdownPrefetchRef.current.promise) {
+        const prefetched = await breakdownPrefetchRef.current.promise;
+        if (prefetched) data = prefetched;
+      }
+
+      if (!data) {
+        data = await callBackend({ action: 'trackBreakdown', track, messages, mode });
+        if (key) breakdownCacheRef.current.set(key, data);
+      }
+
+      applyTrackBreakdownData(data);
     } catch (error) {
       setErr(`Failed to load breakdown: ${error.message}`);
       setPhase('cold');
