@@ -34,8 +34,10 @@ function formatSessionMeta(session) {
   meta = meta
     .replace(/\s*·\s*Mode:\s*(deep|commute|reentry)\b/gi, '')
     .replace(/\s*·\s*(Deep listen|On the move)\b/gi, '')
+    .replace(/\s*·\s*Next:\s*/gi, ' · ')
     .replace(/\bMode:\s*(deep|commute|reentry)\b/gi, '')
     .replace(/\bDeep listen\b/gi, '')
+    .replace(/\bNext:\s*/gi, '')
     .replace(/\s*·\s*$/g, '')
     .trim();
 
