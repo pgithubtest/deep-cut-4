@@ -22,14 +22,8 @@ function cleanText(text = '') {
     .trim();
 }
 
-function normaliseMode(mode) {
-  if (mode === 'commute') return 'On the move';
-  return 'Deep listen';
-}
-
 function formatSessionMeta(session) {
   const artist = String(session?.artist || '').trim();
-  const modeLabel = normaliseMode(session?.mode);
   let meta = String(session?.status || session?.resumePhase || 'Saved session').trim();
 
   if (artist) {
@@ -41,6 +35,7 @@ function formatSessionMeta(session) {
     .replace(/\s*·\s*Mode:\s*(deep|commute|reentry)\b/gi, '')
     .replace(/\s*·\s*(Deep listen|On the move)\b/gi, '')
     .replace(/\bMode:\s*(deep|commute|reentry)\b/gi, '')
+    .replace(/\bDeep listen\b/gi, '')
     .replace(/\s*·\s*$/g, '')
     .trim();
 
@@ -51,7 +46,7 @@ function formatSessionMeta(session) {
   if (meta === 'breakdown') meta = session?.track ? `Track ${session.track.num} · ${session.track.title}` : 'Breakdown ready';
   if (meta === 'album_wrap') meta = 'Album wrap ready';
 
-  return `${meta} · ${modeLabel}`;
+  return meta;
 }
 
 function sessionIdFor(session) {
