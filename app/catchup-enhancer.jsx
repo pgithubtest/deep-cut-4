@@ -337,16 +337,36 @@ function renderSpotifyButton() {
   link.setAttribute('aria-label', `Open ${title} by ${artist} in Spotify`);
 }
 
+function renderColdTrackNumber() {
+  const cold = document.querySelector('.cold');
+  const trackNumber = cold?.querySelector('.tnum');
+  if (!cold || !trackNumber) return;
+
+  const session = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  const trackMap = Array.isArray(session?.trackMap) ? session.trackMap : [];
+  if (!trackMap.length) return;
+
+  const displayedTitle = cold.querySelector('.tname')?.textContent?.trim().toLowerCase();
+  const mappedTrack = displayedTitle ? trackMap.find((item) => String(item.title || '').trim().toLowerCase() === displayedTitle) : null;
+  const numberFromText = trackNumber.textContent?.match(/Track\s+(\d+)/i)?.[1];
+  const number = mappedTrack?.num || session?.track?.num || numberFromText;
+  if (!number) return;
+
+  trackNumber.textContent = `Track ${number} of ${trackMap.length}`;
+}
+
 export default function CatchUpEnhancer() {
   useEffect(() => {
     installStorageBridge();
     renderActiveSessionRow();
     renderSessionLibrary();
     renderSpotifyButton();
+    renderColdTrackNumber();
     const observer = new MutationObserver(() => {
       renderActiveSessionRow();
       renderSessionLibrary();
       renderSpotifyButton();
+      renderColdTrackNumber();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
