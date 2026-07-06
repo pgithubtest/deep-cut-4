@@ -352,7 +352,8 @@ function renderColdTrackNumber() {
   const number = mappedTrack?.num || session?.track?.num || numberFromText;
   if (!number) return;
 
-  trackNumber.textContent = `Track ${number} of ${trackMap.length}`;
+  const nextText = `Track ${number} of ${trackMap.length}`;
+  if (trackNumber.textContent !== nextText) trackNumber.textContent = nextText;
 }
 
 export default function CatchUpEnhancer() {
