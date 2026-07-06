@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 
 const STORAGE_KEY = 'deep-cut-active-session-v1';
 const LIBRARY_KEY = 'deep-cut-sessions-v1';
+const PENDING_RESUME_KEY = 'deep-cut-pending-resume-v1';
+const CURRENT_ALBUM_KEY = 'deep-cut-current-album-v1';
 const MAX_SESSIONS = 8;
 
 function safeParse(value, fallback = null) {
@@ -27,14 +29,18 @@ function normaliseMode(mode) {
   return 'Deep listen';
 }
 
+function modeForStatus(mode) {
+  if (mode === 'commute') return 'On the move';
+  return 'Deep Listen';
+}
+
 function formatSessionMeta(session) {
   const artist = String(session?.artist || '').trim();
   const modeLabel = normaliseMode(session?.mode);
   let meta = String(session?.status || session?.resumePhase || 'Saved session').trim();
 
   if (artist) {
-    const escapedArtist = artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    meta = meta.replace(new RegExp(`^${escapedArtist}\\s*·\\s*`, 'i'), '');
+    meta = meta.replace(new RegExp(`^${artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*·\\s*`, 'i'), '');
   }
 
   meta = meta
@@ -45,6 +51,7 @@ function formatSessionMeta(session) {
     .trim();
 
   if (!meta || meta === 'confirming') meta = 'Discography ready';
+  if (meta === 'artist_orientation') meta = 'Artist orientation ready';
   if (meta === 'album_intro') meta = 'Album intro ready';
   if (meta === 'cold') meta = session?.track ? `Track ${session.track.num} · ${session.track.title}` : 'Ready for next track';
   if (meta === 'breakdown') meta = session?.track ? `Track ${session.track.num} · ${session.track.title}` : 'Breakdown ready';
@@ -96,32 +103,9 @@ function saveSessionToLibrary(rawSession, makeActive = true) {
   return session;
 }
 
-function archiveCurrentActiveSession() {
+function syncActiveSessionToLibrary() {
   const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
   if (current?.artist) saveSessionToLibrary(current, true);
-}
-
-function installStorageBridge() {
-  if (window.__deepCutStorageBridgeInstalled) return;
-  window.__deepCutStorageBridgeInstalled = true;
-
-  archiveCurrentActiveSession();
-
-  const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
-  const originalRemoveItem = window.localStorage.removeItem.bind(window.localStorage);
-
-  window.localStorage.setItem = (key, value) => {
-    if (key === STORAGE_KEY) {
-      const session = safeParse(value);
-      if (session?.artist) saveSessionToLibrary(session, true);
-    }
-    return originalSetItem(key, value);
-  };
-
-  window.localStorage.removeItem = (key) => {
-    if (key === STORAGE_KEY) archiveCurrentActiveSession();
-    return originalRemoveItem(key);
-  };
 }
 
 function renderOverlay(text, resumeAction) {
@@ -177,9 +161,23 @@ function renderOverlay(text, resumeAction) {
 
 function activateSession(session) {
   if (!session?.artist) return;
-  saveSessionToLibrary(session, true);
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  const savedSession = saveSessionToLibrary(session, true) || session;
+  window.localStorage.setItem(PENDING_RESUME_KEY, JSON.stringify({ id: savedSession.id, artist: savedSession.artist, savedAt: Date.now() }));
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(savedSession));
   window.location.reload();
+}
+
+function autoResumePendingSession() {
+  const pending = safeParse(window.localStorage.getItem(PENDING_RESUME_KEY));
+  if (!pending?.artist) return;
+
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  const sameSession = current?.id === pending.id || current?.artist === pending.artist;
+  const resumeButton = document.querySelector('.resume-card .resume-btn');
+  if (!sameSession || !resumeButton) return;
+
+  window.localStorage.removeItem(PENDING_RESUME_KEY);
+  resumeButton.click();
 }
 
 async function catchUpSession(session, resumeAction, button) {
@@ -284,7 +282,7 @@ function renderSessionLibrary() {
   if (!landing || landing.querySelector('.session-library')) return;
 
   const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
-  archiveCurrentActiveSession();
+  syncActiveSessionToLibrary();
   const library = readLibrary();
   const sessions = Object.values(library.sessions || {})
     .filter((session) => session?.artist && session.artist !== current?.artist)
@@ -295,6 +293,11 @@ function renderSessionLibrary() {
 
   const section = document.createElement('div');
   section.className = 'session-library';
+
+  const label = document.createElement('div');
+  label.className = 'session-library-label';
+  label.textContent = 'Saved sessions';
+  section.appendChild(label);
 
   sessions.forEach((session) => {
     const row = buildSessionRow(session, {
@@ -312,16 +315,72 @@ function renderSessionLibrary() {
   }
 }
 
+function includedAlbums(session) {
+  return Array.isArray(session?.albums) ? session.albums.filter((album) => album?.included && album?.title) : [];
+}
+
+function currentAlbumStoreKey(session) {
+  return `${CURRENT_ALBUM_KEY}-${session?.id || sessionIdFor(session || {})}`;
+}
+
+function rememberCurrentAlbum(session, title) {
+  if (!session?.artist || !title) return;
+  window.sessionStorage.setItem(currentAlbumStoreKey(session), title);
+}
+
+function rememberedCurrentAlbum(session) {
+  if (!session?.artist) return '';
+  return window.sessionStorage.getItem(currentAlbumStoreKey(session)) || '';
+}
+
+function inferCurrentAlbum(session) {
+  const searchable = `${session?.content || ''}\n${session?.status || ''}`.toLowerCase();
+  const match = includedAlbums(session).find((album) => searchable.includes(String(album.title).toLowerCase()));
+  if (match?.title) {
+    rememberCurrentAlbum(session, match.title);
+    return match.title;
+  }
+  return rememberedCurrentAlbum(session) || String(session?.status || '').split(' · ')[0] || session?.artist || '';
+}
+
+function correctStatusBar() {
+  const statusText = document.querySelector('.sbar .stxt');
+  const current = safeParse(window.localStorage.getItem(STORAGE_KEY));
+  if (!statusText || !current?.artist) return;
+
+  const cold = document.querySelector('.cold');
+  if (!cold) {
+    inferCurrentAlbum(current);
+    return;
+  }
+
+  const numText = cold.querySelector('.tnum')?.textContent || '';
+  const title = cold.querySelector('.tname')?.textContent?.trim();
+  const num = numText.match(/Track\s+(\d+)/i)?.[1] || current.track?.num;
+  if (!num || !title) return;
+
+  const total = Array.isArray(current.trackMap) && current.trackMap.length ? ` of ${current.trackMap.length}` : '';
+  const albumTitle = inferCurrentAlbum(current);
+  statusText.textContent = `${albumTitle} · Track ${num}${total} · Now: ${title} · Mode: ${modeForStatus(current.mode)}`;
+}
+
 export default function CatchUpEnhancer() {
   useEffect(() => {
-    installStorageBridge();
+    syncActiveSessionToLibrary();
     renderActiveSessionRow();
     renderSessionLibrary();
+    autoResumePendingSession();
+    correctStatusBar();
+
     const observer = new MutationObserver(() => {
+      syncActiveSessionToLibrary();
       renderActiveSessionRow();
       renderSessionLibrary();
+      autoResumePendingSession();
+      correctStatusBar();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
   }, []);
 
